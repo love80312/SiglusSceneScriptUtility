@@ -991,7 +991,6 @@ class BS:
         s.out_scn["scn"].push_i32(_fc(form_code))
         s.out_scn["scn"].push_i32(int(def_prop.get("prop_id", 0) or 0))
         return True
-
     @iterative_method
     def bs_def_cmd(s, def_cmd):
         if def_cmd is None:
@@ -1082,11 +1081,24 @@ class BS:
         else:
             s.out_scn["scn"].push_u8(C.CD_GOSUBSTR)
             s.out_scn["scn"].push_i32(label_no)
+
         args = (goto.get("arg_list") or {}).get("arg") or []
         s.out_scn["scn"].push_i32(len(args))
-        for a in args:
-            form = dereference(((a or {}).get("exp") or {}).get("tmp_form"))
-            s.out_scn["scn"].push_i32(_fc(form))
+
+        for a in reversed(args):
+            exp = (a or {}).get("exp") or {}
+            form = exp.get("tmp_form") or exp.get("node_form")
+            s.out_scn["scn"].push_i32(_fc(dereference(form)))
+
+            if form == C.FM_LIST:
+                smp = exp.get("smp_exp") or {}
+                while smp.get("node_type") == C.NT_SMP_KAKKO:
+                    smp = (smp.get("exp") or {}).get("smp_exp") or {}
+
+                forms = (smp.get("exp_list") or {}).get("form_list") or []
+                s.out_scn["scn"].push_i32(len(forms))
+                for form_item in reversed(forms):
+                    s.out_scn["scn"].push_i32(_fc(dereference(form_item)))
         return True
 
     def bs_return(s, ret):
@@ -1299,7 +1311,6 @@ class BS:
         s.out_scn["scn"].push_i32(form_r2)
         s.out_scn["scn"].push_i32(int(assign.get("al_id", 0) or 0))
         return True
-
     def bs_command(s, command):
         if command is None:
             return True
@@ -1597,7 +1608,6 @@ class BS:
         if not (yield (s.bs_exp, arg.get("exp"), bool(need_value))):
             return False
         return True
-
     def bs_literal(s, Literal):
         if Literal is None:
             return True

@@ -259,6 +259,7 @@ def parallel_compile(
     ss_files: list[str],
     max_workers: int | None = None,
 ) -> dict:
+    from concurrent.futures.process import BrokenProcessPool
     from .BS import (
         empty_macro_stat_counts,
         empty_source_stat_counts,
@@ -273,71 +274,172 @@ def parallel_compile(
     del ia_data["replace_tree"]
     utf8 = bool(ctx.get("utf8"))
     debug_outputs = bool(ctx.get("debug_outputs"))
+    full_compile_stats = ctx["stats"]["full_compile_stats"]
     source_texts = ctx["source_texts"]
+
     os.makedirs(os.path.join(tmp_path, "bs"), exist_ok=True)
-    completed = 0
+
     total = len(ss_files)
+    completed = 0
+    completed_indices = set()
     scene_macro_counts = empty_macro_stat_counts()
     global_macro_usage_delta = {}
     source_stats = empty_source_stat_counts()
+
+    if not total:
+        return {
+            "parallel": True,
+            "scene_macro_counts": scene_macro_counts,
+            "global_macro_usage_delta": global_macro_usage_delta,
+            "source_stats": source_stats,
+        }
+
     print(f"[PARALLEL] Compiling {total} files with {workers} processes...")
-    with process_pool(
-        workers,
-        initializer=_init_compile_worker,
-        initargs=(
-            tmp_path,
-            ia_data,
-            utf8,
-            debug_outputs,
-            ctx["stats"]["full_compile_stats"],
-        ),
-    ) as executor:
-        tasks = (
-            executor.submit(
-                _compile_one_process,
-                ss_path,
-                format_scene_name(ss_path, ctx),
-                source_texts[os.path.basename(ss_path)],
+
+    def merge_result(index: int, display_name: str, result: tuple) -> None:
+        nonlocal completed
+
+        (
+            _display_name,
+            error,
+            macro_counts,
+            usage_delta,
+            scene_source_stats,
+            warnings,
+        ) = result
+
+        for warning in warnings:
+            sys.stderr.write(warning)
+
+        completed += 1
+        if error is not None:
+            print(f"  [{completed}/{total}] FAIL: {display_name}")
+            print(f"  ERROR in {display_name}: {error}")
+            raise RuntimeError(str(error))
+
+        merge_macro_stat_counts(scene_macro_counts, macro_counts)
+        merge_source_stat_counts(source_stats, scene_source_stats)
+        for key, value in usage_delta.items():
+            global_macro_usage_delta[key] = (
+                global_macro_usage_delta.get(key, 0) + value
             )
-            for ss_path in ss_files
+
+        completed_indices.add(index)
+        print(f"  [{completed}/{total}] OK: {display_name}")
+
+    executor = None
+    futures = {}
+    next_index = 0
+    process_error = None
+
+    def submit_next() -> bool:
+        nonlocal next_index
+
+        if next_index >= total:
+            return False
+
+        index = next_index
+        ss_path = ss_files[index]
+        display_name = format_scene_name(ss_path, ctx)
+        source_text = source_texts[os.path.basename(ss_path)]
+        future = executor.submit(
+            _compile_one_process,
+            ss_path,
+            display_name,
+            source_text,
         )
-        futures = set(islice(tasks, workers))
-        while futures:
-            done, futures = wait(futures, return_when=FIRST_COMPLETED)
-            for future in done:
-                (
+        futures[future] = (index, display_name)
+        next_index += 1
+        return True
+
+    _flush_stdio_before_process_pool()
+
+    with _multiprocessing_main():
+        try:
+            executor = _new_process_pool(
+                workers,
+                initializer=_init_compile_worker,
+                initargs=(
+                    tmp_path,
+                    ia_data,
+                    utf8,
+                    debug_outputs,
+                    full_compile_stats,
+                ),
+            )
+
+            for _ in range(min(workers, total)):
+                if not submit_next():
+                    break
+
+            while futures:
+                done, _ = wait(
+                    futures,
+                    return_when=FIRST_COMPLETED,
+                )
+
+                for future in done:
+                    index, display_name = futures.pop(future)
+                    result = future.result()
+                    merge_result(index, display_name, result)
+                    submit_next()
+
+            executor.shutdown()
+            executor = None
+
+        except (OSError, BrokenProcessPool) as exc:
+            process_error = exc
+            for future in futures:
+                future.cancel()
+            if executor is not None:
+                with suppress(Exception):
+                    _terminate_process_pool(executor)
+            executor = None
+
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            if executor is not None:
+                with suppress(Exception):
+                    _terminate_process_pool(executor)
+            raise
+
+    if process_error is not None:
+        remaining = [
+            index for index in range(total) if index not in completed_indices
+        ]
+        if remaining:
+            sys.stderr.write(
+                f"{_runtime.command_name()}: warning: process pool failed "
+                f"({type(process_error).__name__}: {process_error}); "
+                f"retrying {len(remaining)} unfinished scenes serially\n"
+            )
+
+            _init_compile_worker(
+                tmp_path,
+                ia_data,
+                utf8,
+                debug_outputs,
+                full_compile_stats,
+            )
+
+            for index in remaining:
+                ss_path = ss_files[index]
+                display_name = format_scene_name(ss_path, ctx)
+                result = _compile_one_process(
+                    ss_path,
                     display_name,
-                    error,
-                    macro_counts,
-                    usage_delta,
-                    scene_source_stats,
-                    warnings,
-                ) = future.result()
-                for warning in warnings:
-                    sys.stderr.write(warning)
-                completed += 1
-                if error is not None:
-                    for pending in futures:
-                        pending.cancel()
-                    print(f"  [{completed}/{total}] FAIL: {display_name}")
-                    print(f"  ERROR in {display_name}: {error}")
-                    raise RuntimeError(str(error))
-                merge_macro_stat_counts(scene_macro_counts, macro_counts)
-                merge_source_stat_counts(source_stats, scene_source_stats)
-                for key, value in usage_delta.items():
-                    global_macro_usage_delta[key] = (
-                        global_macro_usage_delta.get(key, 0) + value
-                    )
-                print(f"  [{completed}/{total}] OK: {display_name}")
-            futures.update(islice(tasks, len(done)))
+                    source_texts[os.path.basename(ss_path)],
+                )
+                merge_result(index, display_name, result)
+
     print(f"[PARALLEL] Compilation complete: {total} files")
     return {
-        "parallel": True,
+        "parallel": process_error is None,
         "scene_macro_counts": scene_macro_counts,
         "global_macro_usage_delta": global_macro_usage_delta,
         "source_stats": source_stats,
     }
-
 
 def _lzss_compress_task(
     args: tuple[str, bytes, str, bytes],
