@@ -251,8 +251,21 @@ impl<'a> BytecodeBuilder<'a> {
                         target.subopt
                     });
                     self.push_i32(args.args.len() as i32);
-                    for arg in &args.args {
-                        self.push_form(self.dereference(arg.value.temp_form));
+                    for arg in args.args.iter().rev() {
+                        let form = arg.value.temp_form;
+                        self.push_form(self.dereference(form));
+
+                        let mut value = &arg.value;
+                        while let AstPayload::Paren { expression } = &value.payload {
+                            value = expression;
+                        }
+
+                        if let AstPayload::ExpressionList { forms, .. } = &value.payload {
+                            self.push_i32(forms.len() as i32);
+                            for form in forms.iter().rev() {
+                                self.push_form(self.dereference(*form));
+                            }
+                        }
                     }
                     if !keep_value {
                         self.push_u8(self.codes.cd.pop);
@@ -301,6 +314,7 @@ impl<'a> BytecodeBuilder<'a> {
                     } = &node.payload
                     else {
                         unreachable!()
+                    };
                     };
                     self.set_label(init_label);
                     pending.push(CompileStep::LoopEnd(update_label, out_label));
@@ -607,6 +621,7 @@ impl<'a> BytecodeBuilder<'a> {
                             return Self::error("TNMSERR_BS_NEED_REFERENCE", node);
                         }
                         pending.push(CompileStep::Gosub(*kind, target, args, true));
+                    }
                     }
                     AstPayload::Literal { atom } => {
                         if !need_value {
