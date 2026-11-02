@@ -4,7 +4,6 @@ import os
 import sys
 from contextlib import contextmanager, suppress
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
-from itertools import islice
 import siglus_ssu as _runtime
 from . import const as C
 from .native_ops import find_shuffle_seed_first, is_native_available
