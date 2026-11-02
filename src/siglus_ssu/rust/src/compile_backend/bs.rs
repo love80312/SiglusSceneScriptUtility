@@ -315,7 +315,6 @@ impl<'a> BytecodeBuilder<'a> {
                     else {
                         unreachable!()
                     };
-                    };
                     self.set_label(init_label);
                     pending.push(CompileStep::LoopEnd(update_label, out_label));
                     pending.push(CompileStep::Statements(body.iter()));
@@ -621,7 +620,6 @@ impl<'a> BytecodeBuilder<'a> {
                             return Self::error("TNMSERR_BS_NEED_REFERENCE", node);
                         }
                         pending.push(CompileStep::Gosub(*kind, target, args, true));
-                    }
                     }
                     AstPayload::Literal { atom } => {
                         if !need_value {
