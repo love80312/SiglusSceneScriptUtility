@@ -319,9 +319,7 @@ def parallel_compile(
         merge_macro_stat_counts(scene_macro_counts, macro_counts)
         merge_source_stat_counts(source_stats, scene_source_stats)
         for key, value in usage_delta.items():
-            global_macro_usage_delta[key] = (
-                global_macro_usage_delta.get(key, 0) + value
-            )
+            global_macro_usage_delta[key] = global_macro_usage_delta.get(key, 0) + value
 
         completed_indices.add(index)
         print(f"  [{completed}/{total}] OK: {display_name}")
@@ -404,9 +402,7 @@ def parallel_compile(
             raise
 
     if process_error is not None:
-        remaining = [
-            index for index in range(total) if index not in completed_indices
-        ]
+        remaining = [index for index in range(total) if index not in completed_indices]
         if remaining:
             sys.stderr.write(
                 f"{_runtime.command_name()}: warning: process pool failed "
@@ -439,6 +435,7 @@ def parallel_compile(
         "global_macro_usage_delta": global_macro_usage_delta,
         "source_stats": source_stats,
     }
+
 
 def _lzss_compress_task(
     args: tuple[str, bytes, str, bytes],
