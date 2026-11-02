@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 
 
+## [Unreleased] - 2026-11-02
+
+- Added a Windows x64 portable-build workflow. It checks Python syntax and Ruff, runs Rust formatting and Clippy, builds and verifies the native Python wheel, packages the executable with PyInstaller, runs executable smoke tests, and uploads the portable artifact.
+- Improved parallel scene compilation error handling. When an `OSError` or `BrokenProcessPool` occurs, pending tasks are cancelled, the failed process pool is terminated, and unfinished scenes are retried serially. The compilation result now indicates whether multiprocessing completed successfully.
+- Localized CLI usage and help text into Traditional Chinese (Taiwan), including command descriptions, options, and test-mode guidance.
+
+
 ## [v0.5.8] - 2026-10-31
 
 - Added `-a --read-flags` to export unread flag indices to JSON, optionally validate them against a scene PCK and include original source lines, and report compatibility according to the engine's scene-name and flag-count rules. LSP accepts `--read-sav` and exposes individual saved states and precise compiler-derived source ranges through hover and `siglus/readFlags`, preserving separate flags on the same line, mapping macro expansions to their source origins, and reporting mismatches explicitly.
